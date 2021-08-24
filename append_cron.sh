@@ -1,0 +1,1 @@
+/usr/local/bin/python3 /home/vending/vgc2/append_log.py

@@ -1,0 +1,28 @@
+['1623164887_log.txt']
+Traceback (most recent call last):
+  File "/home/vending/python/cron_getSubFiles.py", line 43, in <module>
+    main()
+  File "/home/vending/python/cron_getSubFiles.py", line 38, in main
+    GetSubFiles(dir);
+  File "/home/vending/python/cron_getSubFiles.py", line 26, in GetSubFiles
+    shutil.copyfile(logFile, os.path.join(devBackupPath, logFile))        
+  File "/usr/lib64/python2.6/shutil.py", line 51, in copyfile
+    with open(dst, 'wb') as fdst:
+IOError: [Errno 2] No such file or directory: '/home/vending/vgc2_backup/E1A8F6055337433231202020FF0D2D21/1623164887_log.txt'
+['1623161933_log.txt']
+Traceback (most recent call last):
+  File "/home/vending/python/cron_getSubFiles.py", line 43, in <module>
+    main()
+  File "/home/vending/python/cron_getSubFiles.py", line 38, in main
+    GetSubFiles(dir);
+  File "/home/vending/python/cron_getSubFiles.py", line 26, in GetSubFiles
+    shutil.copyfile(logFile, os.path.join(devBackupPath, logFile))        
+  File "/usr/lib64/python2.6/shutil.py", line 51, in copyfile
+    with open(dst, 'wb') as fdst:
+IOError: [Errno 2] No such file or directory: '/home/vending/vgc2_backup/108A66E25337433231202020FF0D1F25/1623161933_log.txt'
+  File "/home/vending/python/cron_getSubFiles.py", line 34
+    os.chdir(originalLogDir);
+                            ^
+IndentationError: unindent does not match any outer indentation level
+/bin/sh: python3: command not found
+/bin/sh: python3: command not found
