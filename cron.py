@@ -242,7 +242,7 @@ def ImportLogData(dir):
                 #Once parsing is done then append the lines.
                 lastLineNum += totalLine
                 logFile.close()
-                # os.remove(file)
+                os.remove(file)
 
         appLogFile.close()
 
@@ -410,6 +410,7 @@ def setCardTransactionResult (type, line_no):
         "time" : cardTransactionState['time'],
         "product" : getProductIdFromSelectedItem(cardTransactionState['product']['selectedItem'], cardTransactionState['product']['price']),
         # "price" : cardTransactionState['product']['price'],
+        "selectedItem": cardTransactionState['product']['selectedItem'],
         "fee" : cardTransactionState['fee'],
         "refund" : cardTransactionState['refund'],
         "failReason" : cardTransactionState['failReason'],
@@ -755,6 +756,7 @@ def setCashCoinTransaction(type, time, line_no):
         "status" : type,
         "time" : time,
         "product" : getProductIdFromSelectedItem(cashCoinTransactionState['product']['selectedItem'], cashCoinTransactionState['product']['price']),
+        "selectedItem": cashCoinTransactionState['product']['selectedItem'],
         "refund" : cashCoinTransactionState['totalRefundPrice'],
         "failReason" : cashCoinTransactionState['failReason'],
         "tubeLevelBefore" : cashCoinTransactionState['initialTubeStatus'],
@@ -899,6 +901,7 @@ def setCashBillTransaction(type, time, failReason = "", line_no = 0):
         "status" : type,
         "time" : time,
         "product" : getProductIdFromSelectedItem(cashBillTransactionState['product']['selectedItem'], cashBillTransactionState['product']['price']),
+        "selectedItem": cashBillTransactionState['product']['selectedItem'],
         "refund" : cashBillTransactionState['totalRefundPrice'],
         "billLevel" : cashBillTransactionState['billLevel'],
         "failReason": failReason,
@@ -1147,7 +1150,7 @@ def main():
     deviceDirs = glob.glob("./*")
     for dir in deviceDirs:
         if (len(dir) == 34):
-            if "1D7AB3425337433231202020FF0D0000" in dir:
+            # if "01C357645337433231202020FF0D3505" in dir:
                 importMachineData(dir)
     endtime = datetime.now()
     print( endtime, ": end converting log data to mongodb" )
