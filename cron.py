@@ -63,6 +63,10 @@ cardTransactionState = {
 # end card pre auth config
 # ------------------------------- end card config --------------------------------------
 
+# ------------------------------- last coin tube status -------------------------------------
+lastCoinTubeStatus = ''
+# ------------------------------- end last coin tube status -------------------------------------
+
 # ------------------------------- cash coin config -------------------------------------
 coinTubeLevelFormat = [
     0.00, 0.10, 0.20, 0.50, 0.00, 2.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00
@@ -134,8 +138,11 @@ def ImportConfigData(dir, machine):
     with open(dir) as content:
         lines = content.readlines()
         start = False
+        config = {}
+        config['machineUID'] = machine[2:len(machine)]
         global machineUID
         machineUID = machine[2:len(machine)]
+        config['config'] = {}
         for line in lines:
             if "CONF_START" in line:
                 start = True
@@ -151,10 +158,12 @@ def ImportConfigData(dir, machine):
                 global siteId
                 devName = item[1]
                 siteId = getSiteIdFromDevName(devName)
+            config['config'][item[0]] = item[1].replace('\n', '')
+        config['siteID'] = siteId
+        vendmachines.update_one({'machineUID' : config['machineUID']}, {'$set': config}, True)
 
 def getSiteIdFromDevName(devName):
     siteId = ""
-    # print(devName)
     searchSite = re.search("S[0-9]{3,4}", devName)
     searchSiteFromD = re.search("D[0-9]{3,4}", devName)
     searchTest = re.search("TEST", devName)
@@ -173,21 +182,19 @@ def getProductIdFromSelectedItem(selectedItem, price):
     result = {'productID': 'unknown', 'aisleNum': selectedItem.strip(), 'price': price}
     productId = ''
     planogram = planograms.find_one({ 'machineUID': machineUID })
-    # print(selectedItem * 1)
     if planogram:
         for row in planogram['rows']:
             for aisle in row['aisles']:
                 if selectedItem.strip(' ').isdigit()  and ( aisle['aisleNum'] == int(selectedItem.strip(' ')) ):
                     if 'productId' in aisle.keys():
                         result['productID'] = aisle['productId']
-                        # print(aisle['productId'])
     return result
 
 def calculateTubeLevelFromStatus(tubeStatus):
     statusArray = tubeStatus.split(" ")
     totalPrice = 0
     index = 0
-    while index < len(statusArray) - 1:
+    while index < len(statusArray) and index < len(coinTubeLevelFormat):
         totalPrice += coinTubeLevelFormat[index] * 100 * ( int(statusArray[index]) ) 
         index += 1
     return totalPrice
@@ -224,10 +231,12 @@ def ImportLogData(dir):
         LogFiles.sort(reverse=False)
         appLogFile = open(AppendedLogFileName, "a+")
         for file in LogFiles:
+            # print(file)
             with open(file) as logFile:
-                #Parse the log file here before appending.
                 totalLine = 0
+                #Parse the log file here before appending.
                 for line_no, line in enumerate(logFile):
+                    time = ''
                     if re.match("[0-9]{4}\-[0-9]{2}\-[0-9]{2}\ [0-9]{2}:[0-9]{2}:[0-9]{2}:[0-9]{3}", line[0:23]):
                         time = datetime.strptime(line[0:23], '%Y-%m-%d %H:%M:%S:%f')
                     # end get current time
@@ -246,6 +255,15 @@ def ImportLogData(dir):
 
         appLogFile.close()
 
+
+# ---------------------------set last coin tube status ---------------------------------------------
+def setLastCoinTubeStatus(line, line_no):
+    global lastCoinTubeStatus
+    if constants.CASH_COIN_TUBE_LEVEL in line:
+        value = re.search(constants.CASH_COIN_TUBE_LEVEL_PATTERN, line)
+        if (value):
+            lastCoinTubeStatus = value.group(1)
+# ---------------------------end set last coin tube status ---------------------------------------------
 # ----------------------------card log analyse--------------------------------
 def formatCardTransaction(line_no):
     global cardTransactionState
@@ -274,7 +292,6 @@ def formatCardTransaction(line_no):
         "startLineNumber": -1,
         "endLineNumber": -1
     }
-    # print(cardTransactionState['start'])
 
 def checkCardTransaction(line, time, line_no):
     global cardTransactionState
@@ -372,25 +389,23 @@ def checkCardTransaction(line, time, line_no):
         if get1Res and (len(get1Res.group(1)) > 1):
             dataArray = get1Res.group(1).split(',')
             cardTransactionState['cardType'] = dataArray[1]
-            if (len(dataArray) >= 3):
+            if (len(dataArray) > 3):
                 cardTransactionState['fee'] = int(dataArray[3]) - int(dataArray[2])
             else: 
                 cardTransactionState['fee'] = 0
-            # print(len(dataArray))
-            # print(line_no)
-            if (len(dataArray) >= 23):
+            if (len(dataArray) > 23):
                 cardTransactionState['terminalID'] = dataArray[23]
             else:
                 cardTransactionState['terminalID'] = "unknown"
 
-            if (len(dataArray) >= 16):
+            if (len(dataArray) > 16):
                 cardTransactionState['cardNum'] = dataArray[16]
             else:
                 cardTransactionState['cardNum'] = "unknown"
 
-            if (len(dataArray) >= 14 and dataArray[14] == 'COMP'):
+            if (len(dataArray) > 14 and dataArray[14] == 'COMP'):
                 setCardTransactionResult("success", line_no)
-            elif (len(dataArray) >= 14 and dataArray[14] == 'VOID'):
+            elif (len(dataArray) > 14 and dataArray[14] == 'VOID'):
                 # cardTransactionState['failReason'] = "TXN GET1: Auth: VOID"
                 cardTransactionState['refund'] = dataArray[3]
                 setCardTransactionResult("failed", line_no)
@@ -419,8 +434,8 @@ def setCardTransactionResult (type, line_no):
         "preAuth" : cardTransactionState['preAuth']['amount'],
         "cardNumber" : cardTransactionState['cardNum'],
     }
-    transactions.update({'machineUID' : data['machineUID'], 'time': data['time']}, data, True)
-    # print(cardTransactionState)
+    transactions.update_one({'machineUID' : data['machineUID'], 'time': data['time']}, {'$set': data}, True)
+    minusProduct(cardTransactionState['product']['selectedItem'], machineUID)
     formatCardTransaction(line_no)
 # ----------------------------------end card-----------------------------
 
@@ -471,15 +486,35 @@ def setCoinTubeLevelFormat(line):
 
 def checkCashCoinTransaction(line, time, line_no):
     global cashCoinTransactionState
-    if constants.CASH_COIN_TUBE_LEVEL in line and not cashCoinTransactionState['start']:
-        initialTubeStatus = re.search(constants.CASH_COIN_TUBE_LEVEL_PATTERN, line)
-        if initialTubeStatus:
-            cashCoinTransactionState['initialTubeStatus'] = initialTubeStatus.group(1)
+    global lastCoinTubeStatus
 
+    # add routing coins without initial tube status.
+    # if (lastCoinTubeStatus == '') and (constants.CASH_COIN_ROUTING_TUBES in line or constants.CASH_COIN_ROUTING_CASH_BOX in line):
+    #     if constants.CASH_COIN_ROUTING_TUBES in line:
+    #         tubeLevel = re.search(constants.CASH_COIN_ROUTING_PRICE, line)
+    #         if tubeLevel:
+    #             numOfCoin = re.search(constants.CASH_COIN_ROUTING_LEVEL, line)
+    #             if numOfCoin:
+    #                 cashCoinTransactionState['routingCoins'].insert(0, numOfCoin.group(1))
+    #                 print(cashCoinTransactionState['initialTubeStatus'])
+    #     else:
+    #         tubeLevel = re.search(constants.CASH_COIN_CASHBOX_PRICE, line)
+    #         if tubeLevel:
+    #             numOfCoin = re.search(constants.CASH_COIN_ROUTING_LEVEL, line)
+    #             if numOfCoin:
+    #                 cashCoinTransactionState['cashBoxCoins'].insert(len(cashCoinTransactionState['cashBoxCoins']), numOfCoin.group(1))
+    #     print(cashCoinTransactionState)
+    
+    # if (cashCoinTransactionState['initialTubeStatus'] == '') and constants.CASH_COIN_TUBE_LEVEL in line and cashCoinTransactionState['start']:
+        # caculate the routings price.
+        # cashCoinTransactionState['initialTubeStatus'] = lastCoinTubeStatus
+
+
+    if constants.CASH_COIN_TUBE_LEVEL in line and not cashCoinTransactionState['start']:
+        cashCoinTransactionState['initialTubeStatus'] = lastCoinTubeStatus
 
     if (cashCoinTransactionState['initialTubeStatus'] != ""):
         if (constants.CASH_COIN_ROUTING_TUBES in line or constants.CASH_COIN_ROUTING_CASH_BOX in line) and cashCoinTransactionState['sessionCom']:
-            # print(cashCoinTransactionState)
             if (cashCoinTransactionState['totalRoutedPrice'] == cashCoinTransactionState['product']['price']):
                 setCashCoinTransaction("success", time, line_no)
             elif (cashCoinTransactionState['product']['selectedItem'] == "none"):
@@ -487,52 +522,48 @@ def checkCashCoinTransaction(line, time, line_no):
                 setCashCoinTransaction("failed", time, line_no)
             else:
                 cashCoinTransactionState['line_no'] = line_no
-                formatCashCoinTransaction(cashCoinTransactionState['currentTubeStatus'], line_no)
+                formatCashCoinTransaction(line_no)
 
         # add coin
         if (constants.CASH_COIN_ROUTING_TUBES in line or constants.CASH_COIN_ROUTING_CASH_BOX in line) and not cashCoinTransactionState['start']:
             cashCoinTransactionState['line_no'] = line_no
             cashCoinTransactionState['startLineNumber'] = line_no
-            print(line_no)
             cashCoinTransactionState['start'] = True
         # end add coin
 
         # calculate coin tube levels:
         if constants.CASH_COIN_ROUTING_TUBES in line and not cashCoinTransactionState['sessionCom']:
             cashCoinTransactionState['line_no'] = line_no
-            if (cashCoinTransactionState['currentTubeStatus'] == ""):
-                cashCoinTransactionState['currentTubeStatus'] = cashCoinTransactionState['initialTubeStatus']
             tubeLevel = re.search(constants.CASH_COIN_ROUTING_PRICE, line)
             if tubeLevel:
                 numOfCoin = re.search(constants.CASH_COIN_ROUTING_LEVEL, line)
                 if numOfCoin:
                     cashCoinTransactionState['routingCoins'].insert(0, numOfCoin.group(1))
                     if (tubeLevel.group(1) == '0'):
-                        tubeLevelArray = cashCoinTransactionState['currentTubeStatus'].split(" ")
-                        cashCoinTransactionState['currentTubeStatus'] = ""
+                        tubeLevelArray = lastCoinTubeStatus.split(" ")
+                        lastCoinTubeStatus = ""
                         for coin in tubeLevelArray:
                             if coin.isdigit():
                                 if (int(numOfCoin.group(1)) == (int(coin) + 1)):
                                     index = tubeLevelArray.index(str(coin))
                                     cashCoinTransactionState['totalRoutedPrice'] += coinTubeLevelFormat[index] * 100
                                     coin = numOfCoin.group(1)
-                            cashCoinTransactionState['currentTubeStatus'] += coin + " "
+                            lastCoinTubeStatus += coin + " "
                     else:
                         cashCoinTransactionState['totalRoutedPrice'] += float(tubeLevel.group(1)) * 100
                         index = coinTubeLevelFormat.index(float(tubeLevel.group(1)))
-                        tubeLevelArray = cashCoinTransactionState['currentTubeStatus'].split(" ")
+                        tubeLevelArray = lastCoinTubeStatus.split(" ")
                      
                         numOfCoin = re.search(constants.CASH_COIN_ROUTING_LEVEL, line)
-                        cashCoinTransactionState['currentTubeStatus'] = ""
+                        lastCoinTubeStatus = ""
                         if numOfCoin:
                             tubeLevelArray[index] = numOfCoin.group(1)
                             for coin in tubeLevelArray:
                                 if coin.isdigit():
-                                    cashCoinTransactionState['currentTubeStatus'] += str(coin) + " "
+                                    lastCoinTubeStatus += str(coin) + " "
 
         if constants.CASH_COIN_ROUTING_CASH_BOX in line and not cashCoinTransactionState['sessionCom']:
-            if (cashCoinTransactionState['currentTubeStatus'] == ""):
-                cashCoinTransactionState['currentTubeStatus'] = cashCoinTransactionState['initialTubeStatus']
+            
             tubeLevel = re.search(constants.CASH_COIN_CASHBOX_PRICE, line)
             if tubeLevel:
                 numOfCoin = re.search(constants.CASH_COIN_ROUTING_LEVEL, line)
@@ -540,19 +571,16 @@ def checkCashCoinTransaction(line, time, line_no):
                     
                     cashCoinTransactionState['cashBoxCoins'].insert(len(cashCoinTransactionState['cashBoxCoins']), numOfCoin.group(1))
                     if (tubeLevel.group(1) == '0'):
-                        tubeLevelArray = cashCoinTransactionState['currentTubeStatus'].split(" ")
+                        tubeLevelArray = lastCoinTubeStatus.split(" ")
                         for coin in tubeLevelArray:
                             if coin.isdigit():
                                 if (int(numOfCoin.group(1)) == int(coin)):
                                     index = tubeLevelArray.index(str(coin))
                                     cashCoinTransactionState['totalRoutedPrice'] += coinTubeLevelFormat[index] * 100
-                    # if (line_no >= 11764) and (line_no <= 11764):
-                    #     print(cashCoinTransactionState['totalRoutedPrice'])
-                    #     print(line_no)
+                   
                     else:
                         cashCoinTransactionState['totalRoutedPrice'] += float(tubeLevel.group(1)) * 100
             
-
         if constants.CASH_SELECT_ITEM in line and cashCoinTransactionState['start'] and not cashCoinTransactionState['sessionCom']:
             cashCoinTransactionState['line_no'] = line_no
             product = {}
@@ -567,7 +595,6 @@ def checkCashCoinTransaction(line, time, line_no):
         if constants.CASH_SESSION_COMPLETE in line and cashCoinTransactionState['start'] and not cashCoinTransactionState['sessionCom']:
             cashCoinTransactionState['line_no'] = line_no
             cashCoinTransactionState['sessionCom'] = True
-            formatcashBillTransaction("", line_no)
             if (cashCoinTransactionState['totalRoutedPrice'] == cashCoinTransactionState['product']['price']):
                 setCashCoinTransaction("success", time, line_no)
 
@@ -580,7 +607,6 @@ def checkCashCoinTransaction(line, time, line_no):
                 afterVendTubeStatus = re.search(constants.CASH_COIN_TUBE_LEVEL_PATTERN, line)
                 if afterVendTubeStatus:
                     cashCoinTransactionState['afterVendTubeStatus'] = afterVendTubeStatus.group(1)
-                    cashCoinTransactionState['currentTubeStatus'] = afterVendTubeStatus.group(1)
                     # totalRoutedPriceNew = getRoutedCoinPrice(line_no)
                     # if (totalRoutedPriceNew > 0):
                     #     cashCoinTransactionState['totalRoutedPrice'] = totalRoutedPriceNew
@@ -592,15 +618,12 @@ def checkCashCoinTransaction(line, time, line_no):
                     cashCoinTransactionState['failReason'] = constants.CASH_COIN_FAIL_REASON['NO_ITEM_SELECTED']
                     setCashCoinTransaction("failed", time, line_no)
                 cashCoinTransactionState['line_no'] = line_no
-                formatCashCoinTransaction(cashCoinTransactionState['currentTubeStatus'], line_no)
+                formatCashCoinTransaction(line_no)
 
         if constants.CASH_COIN_TUBE_LEVEL in line and cashCoinTransactionState['start'] and cashCoinTransactionState['escrowRequest'] and not cashCoinTransactionState['afterVend']:
 
             afterVendTubeStatus = re.search(constants.CASH_COIN_TUBE_LEVEL_PATTERN, line)
             if afterVendTubeStatus:
-                cashCoinTransactionState['currentTubeStatus'] = afterVendTubeStatus.group(1)
-                # print(cashCoinTransactionState)
-                # print(line_no)
                 cashCoinTransactionState['totalRoutedPrice'] = getRoutedCoinPrice(line_no)
 
         if constants.CASH_COIN_PAY_OUT in line and cashCoinTransactionState['start']:
@@ -612,9 +635,8 @@ def checkCashCoinTransaction(line, time, line_no):
             afterPayoutTubeStatus = re.search(constants.CASH_COIN_TUBE_LEVEL_PATTERN, line)
             if afterPayoutTubeStatus:
                 cashCoinTransactionState['afterPayoutTubeStatus'] = afterPayoutTubeStatus.group(1)
-                totalRefundPrice = getRefundPrice()
+                totalRefundPrice = getRefundPrice(line_no)
                 
-                cashCoinTransactionState['currentTubeStatus'] = afterPayoutTubeStatus.group(1)
                 if cashCoinTransactionState['sessionCom']:
                     if (totalRefundPrice == (cashCoinTransactionState['totalRoutedPrice'] - cashCoinTransactionState['product']['price'])):
                         setCashCoinTransaction("success", time, line_no)
@@ -631,7 +653,6 @@ def checkCashCoinTransaction(line, time, line_no):
                             cashCoinTransactionState['failReason'] = "Price doesn't match"
                             setCashCoinTransaction("failed", time, line_no)
                 elif cashCoinTransactionState['escrowRequest']:
-                    
                     if (totalRefundPrice == cashCoinTransactionState['totalRoutedPrice']):
                         cashCoinTransactionState['failReason'] = "Escrow requested, refund all"
                         setCashCoinTransaction("failed", time, line_no)
@@ -639,7 +660,7 @@ def checkCashCoinTransaction(line, time, line_no):
                         cashCoinTransactionState['failReason'] = "Escrow requested, refund not match"
                         setCashCoinTransaction("failed", time, line_no)
 
-def formatCashCoinTransaction(lastTubeStatus = "", line_no = 0):
+def formatCashCoinTransaction(line_no = 0):
     global cashCoinTransactionState
     cashCoinTransactionState = {
         "start" : False,
@@ -647,7 +668,7 @@ def formatCashCoinTransaction(lastTubeStatus = "", line_no = 0):
         "afterVend" : False,
         "status" : False,
         "time" : False,
-        "initialTubeStatus" : cashCoinTransactionState['currentTubeStatus'],
+        "initialTubeStatus" : lastCoinTubeStatus,
         "afterVendTubeStatus" : "",
         "afterPayoutTubeStatus" : "",
         "product" : {
@@ -663,7 +684,6 @@ def formatCashCoinTransaction(lastTubeStatus = "", line_no = 0):
         "totalRoutedPrice": 0,
         "totalRefundPrice": 0,
         "startLineNumber": -1,
-        "endLineNumber": -1,
         "currentTubeStatus" : "",
         "escrowRequest" : False,
     }
@@ -688,7 +708,6 @@ def getRoutedCoinPrice(line_no):
                 tubeLevelArray[index] = str(int(tubeLevelArray[index]) - 1)
     return totalRoutedCoinPrice
 
-
 def getRoutedCoinPriceFromVendedLevel():
     if cashCoinTransactionState['totalRoutedPrice'] > 0:
         return cashCoinTransactionState['totalRoutedPrice']
@@ -700,21 +719,17 @@ def getRoutedCoinPriceFromVendedLevel():
                 index = tubeLevelArray.index(str(coin))
                 tubeLevelArray[index] = str(int(tubeLevelArray[index]) - 1)
                 totalRoutedCoinPrice += coinTubeLevelFormat[index] * 100
-                # print(index)
-            # index = tubeLevelArray.index(coin)
-        return totalRoutedCoinPrice        
+        return totalRoutedCoinPrice
 
-def getRefundPrice():
-    currentTubeStatus = cashCoinTransactionState['currentTubeStatus'].split(" ")
+def getRefundPrice(line_no):
+    currentTubeStatus = lastCoinTubeStatus.split(" ")
     payoutTubeLevelArray = cashCoinTransactionState['afterPayoutTubeStatus'].split(" ")
     totalRefundPrice = 0
     index = 0
-    # print(cashCoinTransactionState['currentTubeStatus'])
-    # print(currentTubeStatus)
-    while index < len(currentTubeStatus) - 1:
-        if (index < len(payoutTubeLevelArray)):
-            if currentTubeStatus[index].isdigit() and payoutTubeLevelArray[index].isdigit():
-                totalRefundPrice += int(coinTubeLevelFormat[index]) * 100 * (int(currentTubeStatus[index]) - int(payoutTubeLevelArray[index]))
+    while index < len(currentTubeStatus) and index < len(coinTubeLevelFormat) and index < len(payoutTubeLevelArray):
+        if currentTubeStatus[index].isdigit() and payoutTubeLevelArray[index].isdigit():
+            totalRefundPrice += float(coinTubeLevelFormat[index]) * 100 * (int(currentTubeStatus[index]) - int(payoutTubeLevelArray[index]))
+                    # exit()
         index += 1
     return int(totalRefundPrice)  
 
@@ -744,9 +759,6 @@ def getTotalVendPrice():
 
 def setCashCoinTransaction(type, time, line_no):
     global cashCoinTransactionState
-    # if (line_no == 7895):
-    #     print(cashCoinTransactionState)
-    #     print(cashCoinTransactionState['totalRefundPrice'])
     data = {
         "machineUID" : machineUID,
         "devName" : devName,
@@ -759,18 +771,17 @@ def setCashCoinTransaction(type, time, line_no):
         "selectedItem": cashCoinTransactionState['product']['selectedItem'],
         "refund" : cashCoinTransactionState['totalRefundPrice'],
         "failReason" : cashCoinTransactionState['failReason'],
-        "tubeLevelBefore" : cashCoinTransactionState['initialTubeStatus'],
-        "tubeLevelAfter" : cashCoinTransactionState['currentTubeStatus'],
+        "tubeLevelBefore" : cashCoinTransactionState['initialTubeStatus'].strip(),
+        "tubeLevelAfter" : lastCoinTubeStatus.strip(),
         "cashBoxCoins": cashCoinTransactionState['cashBoxCoins'],
         "routedCoins": cashCoinTransactionState['routingCoins'],
         "startLineNumber" : cashCoinTransactionState['startLineNumber'],
         "endLineNumber" : line_no,
     }
     if (data['product'] != "none"):
-        transactions.update({'machineUID' : data['machineUID'], 'time': data['time']}, data, True)
-    
-    # print(type)
-    formatCashCoinTransaction(cashCoinTransactionState['currentTubeStatus'], line_no)
+        transactions.update_one({'machineUID' : data['machineUID'], 'time': data['time']}, {'$set': data}, True)
+        minusProduct(cashCoinTransactionState['product']['selectedItem'], machineUID)
+    formatCashCoinTransaction(line_no)
 # ---------------------end check cash transaction------------------------------
 
 # --------------------------- check cash bill note ----------------------------
@@ -832,7 +843,6 @@ def checkCashBillTransaction(line, time, line_no):
     if "MDBS: OTHER <= SESSION COMPLETE." in line and cashBillTransactionState['start'] and cashBillTransactionState['stacked']:
         cashBillTransactionState['line_no'] = line_no
         cashBillTransactionState['sessionCom'] = True
-        formatCashCoinTransaction("", line_no)
 
     if "MDBS: COINCH: TubeFull:" in line and cashBillTransactionState['start'] and cashBillTransactionState['stacked'] and cashBillTransactionState['sessionCom'] and not cashBillTransactionState['payRefund'] and not cardTransactionState['start']:
 
@@ -847,9 +857,9 @@ def checkCashBillTransaction(line, time, line_no):
             cashBillTransactionState['totalRefundPrice'] = totalRefundPrice.group(1)
 
     if "MDBS: COINCH: TubeFull:" in line and cashBillTransactionState['start'] and cashBillTransactionState['stacked'] and cashBillTransactionState['sessionCom'] and cashBillTransactionState['payRefund']:
-        print(cashBillTransactionState)
         cashBillTransactionState['line_no'] = line_no
-        cashBillTransactionState['afterRefundTubeStatus'] = re.search(", TubeStatus: (.+?)\ \.$", line).group(1)
+        if (re.search(", TubeStatus: (.+?)\ \.$", line)):
+            cashBillTransactionState['afterRefundTubeStatus'] = re.search(", TubeStatus: (.+?)\ \.$", line).group(1)    
         if (cashBillTransactionState['totalRefundPrice'] == 0):
             cashBillTransactionState['totalRefundPrice'] = calculateBillRefundPrice()
         if float(cashBillTransactionState['totalRefundPrice']) + float(cashBillTransactionState['product']['price']) in billValueLevelFormat:
@@ -890,8 +900,7 @@ def formatcashBillTransaction(lastTubeStatus = "", line_no = 0):
 
 def setCashBillTransaction(type, time, failReason = "", line_no = 0):
     global cashBillTransactionState
-    if (cashBillTransactionState['startLineNumber'] == -1):
-        cashBillTransactionState['startLineNumber'] = line_no
+    
     data = {
         "machineUID" : machineUID,
         "devName" : devName,
@@ -905,8 +914,8 @@ def setCashBillTransaction(type, time, failReason = "", line_no = 0):
         "refund" : cashBillTransactionState['totalRefundPrice'],
         "billLevel" : cashBillTransactionState['billLevel'],
         "failReason": failReason,
-        "tubeLevelBefore" : cashBillTransactionState['initialTubeStatus'],
-        "tubeLevelAfter" : cashBillTransactionState['afterRefundTubeStatus'],
+        "tubeLevelBefore" : cashBillTransactionState['initialTubeStatus'].strip(),
+        "tubeLevelAfter" : cashBillTransactionState['afterRefundTubeStatus'].strip(),
         "startLineNumber" : cashBillTransactionState['startLineNumber'],
         "endLineNumber" : line_no
     }
@@ -919,19 +928,19 @@ def setCashBillTransaction(type, time, failReason = "", line_no = 0):
         "status" : type,
         "time" : time,
         "product" : {'productID': 'bankBill', 'aisleNum': 0, 'price': 0},
-        "refund" : float(cashBillTransactionState['totalRefundPrice']) * -1,
+        "refund" : float(cashBillTransactionState['totalRefundPrice']) * 1,
         "failReason" : failReason,
-        "tubeLevelBefore" : cashBillTransactionState['initialTubeStatus'],
-        "tubeLevelAfter" : cashBillTransactionState['afterRefundTubeStatus'],
+        "tubeLevelBefore" : cashBillTransactionState['initialTubeStatus'].strip(),
+        "tubeLevelAfter" : cashBillTransactionState['afterRefundTubeStatus'].strip(),
         "cashBoxCoins": [],
         "routedCoins": [],
         "startLineNumber" : cashBillTransactionState['startLineNumber'],
         "endLineNumber" : line_no,
     }
-    # print(cashBillTransactionState)
     if (data['product'] != "none"):
-        transactions.update({'machineUID' : data['machineUID'], 'time': data['time'], 'type': data['type'], 'subType': data['subType']}, data, True)
-        transactions.update({'machineUID' : coinTxndata['machineUID'], 'time': coinTxndata['time'], 'type': coinTxndata['type'], 'subType': coinTxndata['subType']}, coinTxndata, True)
+        transactions.update_one({'machineUID' : data['machineUID'], 'time': data['time'], 'type': data['type'], 'subType': data['subType']}, {'$set': data}, True)
+        transactions.update_one({'machineUID' : coinTxndata['machineUID'], 'time': coinTxndata['time'], 'type': coinTxndata['type'], 'subType': coinTxndata['subType']}, {'$set': coinTxndata}, True)
+        minusProduct(cashBillTransactionState['product']['selectedItem'], machineUID)
 
     cashBillTransactionState = formatcashBillTransaction(cashBillTransactionState['initialTubeStatus'], line_no)
 
@@ -941,7 +950,7 @@ def calculateBillRefundPrice():
     afterRefundTubeLevelArray = cashBillTransactionState['afterRefundTubeStatus'].split(" ")
     index = 0
 
-    while index < len(initTubeLevelArray) - 1:
+    while index < len(afterRefundTubeLevelArray) and index < len(initTubeLevelArray) and index < len(coinTubeLevelFormat):
         totalPrice += coinTubeLevelFormat[index] * 100 * (int(initTubeLevelArray[index]) - int(afterRefundTubeLevelArray[index]))
         index += 1
 
@@ -956,6 +965,7 @@ def ImportStateData(dir):
     global billValueLevelFormat
     global cashBillTransactionState
     global lastLineNum
+    global lastCoinTubeStatus
 
     with open(dir) as content:
         lines = content.readlines()
@@ -988,6 +998,9 @@ def ImportStateData(dir):
             elif (keyValue[0] == 'lastLineNum'):
                 lastLineNum = int(keyValue[1])
 
+            elif (keyValue[0] == 'lastCoinTubeStatus'):
+                lastCoinTubeStatus = keyValue[1].replace("\n", '')
+
 def cashCoinTransactionStateType(data):
     global cashCoinTransactionState
     cashCoinTransactionState = {
@@ -1012,7 +1025,6 @@ def cashCoinTransactionStateType(data):
         "totalRefundPrice": float(data['totalRefundPrice']),
         "line_no": int(data['line_no']),
         "startLineNumber": int(data['startLineNumber']),
-        "currentTubeStatus" : data['currentTubeStatus'],
         "escrowRequest" : bool(data['escrowRequest']),
     }
 
@@ -1118,7 +1130,8 @@ def ExportStateData(dir):
         cashBillTransactionStateString = str({str(key): str(value) for key, value in keys_values})
         f.write("cashBillTransactionState=" + cashBillTransactionStateString + "\n")         
 
-        f.write("lastLineNum=" + str(lastLineNum) + "\n")           
+        f.write("lastLineNum=" + str(lastLineNum) + "\n")   
+        f.write("lastCoinTubeStatus=" + str(lastCoinTubeStatus) + "\n")          
     # os.chdir(currDir);      
 
 def importMachineData(dir):
@@ -1134,25 +1147,90 @@ def importMachineData(dir):
 
     ImportStateData(path)
     subDirs = glob.glob("./*")
-
     for subDir in subDirs:
         if (subDir[2:len(subDir)] == 'dev.conf'):
             ImportConfigData(subDir, dir)
-        if (subDir[2:len(subDir)] == 'Logs.txt'):
-            ImportLogData(dir)
-    # ExportStateData(path)
+            break
+
+    ImportLogData(dir)
+    ExportStateData(path)
     os.chdir(currDir)
 
+def minusProduct(aisleNum, machineUID):
+    aisleData = planograms.aggregate([
+         {
+            "$lookup": {
+                "from": 'vendmachines',
+                "let": { "machineId": "$machineId" },
+                "pipeline": [
+                    { "$match":
+                        { "$expr":
+                            { "$and":
+                                [
+                                   { "$eq": ["$$machineId", "$_id" ] },
+                                ]
+                            }
+                        }
+                    },
+                    {
+                        "$match": {
+                            "$or": [ { "siteID": 'S0036' } ]
+                        }
+                    },
+                    {
+                        "$project": {
+                            "siteID": 1
+                        }
+                    },
+                ],
+                "as": 'machine'
+            }
+        },
+        {"$unwind": "$rows"},
+        {"$unwind": "$rows.aisles"},
+        {
+            "$match": {
+                "rows.aisles.aisleNum": aisleNum,
+                "machine.machineUID": machineUID,
+            }
+        },
+        # {
+        #     "$set": {
+        #         "$inc": { "rows.aisles.products.qty": 1 }
+        #     }
+        # }
+    ])
+    for item in aisleData:
+        if (item['rows']['aisles']['products']):
+
+            history = {
+                "productId": item['rows']['aisles']['products'][0]['productId'],
+                "dealer": "client",
+                "qty": -1,
+                "historyType": "vend",
+                "createdAt": datetime.now()
+            }
+            planograms.update_one(
+                {
+                    
+                },
+                {
+                    "$inc": { "rows.$[i].aisles.$[j].products.0.qty": -1 },
+                    "$push": { 'rows.$[i].aisles.$[j].history': [history]}
+                },
+                upsert=True,
+                array_filters=[{"i._id" : item['rows']['_id']}, {"j._id" : item['rows']['aisles']['_id']}]
+            )
 def main():
     starttime = datetime.now()
-    print( starttime, ": start converting log data to mongodb" )
     os.chdir(ProjectDirName)
     deviceDirs = glob.glob("./*")
     for dir in deviceDirs:
         if (len(dir) == 34):
-            # if "01C357645337433231202020FF0D3505" in dir:
+            if "1A1E62455337433231202020FF0D1B04" in dir:
+                # print(dir)
                 importMachineData(dir)
     endtime = datetime.now()
-    print( endtime, ": end converting log data to mongodb" )
+
 if __name__ == "__main__":
     main()

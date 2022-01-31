@@ -1,8 +1,8 @@
 # log root directory 
-ORIGINAL_LOG_DIR = "D:/Workspace/0514_vending_portal_Australia/vgc2"
+ORIGINAL_LOG_DIR = "D:/2021-Workspace/0514_vending_portal_Australia/vgc2"
 
 # backup log directory
-BACKUP_LOG_DIR = "D:/Workspace/0514_vending_portal_Australia/vgc2_backup"
+BACKUP_LOG_DIR = "D:/2021-Workspace/0514_vending_portal_Australia/vgc2_backup"
 
 
 # finding value patterns.
